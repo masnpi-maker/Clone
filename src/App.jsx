@@ -76,6 +76,7 @@ function App() {
     const deadline = new Date(`${task.deadline}T00:00:00`);
     return deadline < today;
   }).length;
+  const taskStatuses = ["Nepradėta", "Vykdoma", "Atlikta"];
 
   return (
     <>
@@ -158,6 +159,40 @@ function App() {
                   onStatusChange={handleTaskStatusChange}
                   onDeadlineChange={handleTaskDeadlineChange}
                 />
+
+                <section className="charts-card" aria-labelledby="charts-title">
+                  <header className="charts-card__header">
+                    <h2 id="charts-title">Grafikai</h2>
+                    <p>Užduočių pasiskirstymas pagal būseną</p>
+                  </header>
+                  <div className="charts-list">
+                    {taskStatuses.map((status) => {
+                      const count = tasks.filter((task) => task.status === status).length;
+                      const percentage = tasks.length
+                        ? Math.round((count / tasks.length) * 100)
+                        : 0;
+
+                      return (
+                        <div className="chart-row" key={status}>
+                          <div className="chart-row__label">
+                            <span>{status}</span>
+                            <strong>{count}</strong>
+                          </div>
+                          <div
+                            className="chart-track"
+                            role="progressbar"
+                            aria-label={`${status}: ${count} užduotys`}
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                            aria-valuenow={percentage}
+                          >
+                            <span style={{ width: `${percentage}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
 
                 <AddTaskForm onAddTask={handleAddTask} />
 

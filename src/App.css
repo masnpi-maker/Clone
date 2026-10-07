@@ -54,6 +54,69 @@
   color: var(--text);
 }
 
+.charts-card {
+  width: min(100%, 400px);
+  padding: 36px 32px 32px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  box-sizing: border-box;
+  text-align: left;
+}
+
+.charts-card__header {
+  margin-bottom: 28px;
+}
+
+.charts-card__header h2 {
+  margin: 0 0 8px;
+  color: var(--text-h);
+  font-size: 28px;
+  letter-spacing: -0.5px;
+}
+
+.charts-card__header p {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.charts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.chart-row__label {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.chart-row__label strong {
+  color: var(--text-h);
+}
+
+.chart-track {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.chart-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+
 .login-card {
   width: min(100%, 400px);
   padding: 36px 32px 32px;
@@ -163,11 +226,19 @@
     padding: 28px 22px 24px;
   }
 
+  .charts-card {
+    padding: 28px 22px 24px;
+  }
+
   .login-card__header h1 {
     font-size: 24px;
   }
 
   .welcome-message h1 {
+    font-size: 24px;
+  }
+
+  .charts-card__header h2 {
     font-size: 24px;
   }
 }
