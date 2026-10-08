@@ -1,10 +1,36 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import TaskList from "./TaskList";
 import ProgressBar from "./ProgressBar";
 import Navbar from "./Navbar";
 import AddTaskForm from "./AddTaskForm";
 import Profile from "./Profile";
+import Weather from "./Weather";
 import "./App.css";
+
+const TASKS_API_URL = "https://testapi.io/api/masnpi-maker/resource/DateBase";
+const TESTAPI_TOKEN = import.meta.env.VITE_TESTAPI_TOKEN;
+
+function getApiHeaders(includeJson = false) {
+  return {
+    ...(includeJson ? { "Content-Type": "application/json" } : {}),
+    ...(TESTAPI_TOKEN ? { Authorization: `Bearer ${TESTAPI_TOKEN}` } : {}),
+  };
+}
+
+function getTasksFromResponse(response) {
+  const records = Array.isArray(response) ? response : response?.data;
+  if (!Array.isArray(records)) throw new Error("API grąžino netinkamo formato duomenis.");
+
+  return records.map((record) => {
+    const status = record.status ?? record.Status ?? "Nepradėta";
+    return {
+      ...record,
+      title: record.title ?? record.Title ?? record.name ?? "",
+      status: status === "Nepradeta" ? "Nepradėta" : status,
+      deadline: record.deadline ?? record.DeadLine ?? "",
+    };
+  });
+}
 
 function App() {
   const user = {
@@ -18,20 +44,27 @@ function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [loginError, setLoginError] = useState("");
 
-  const [tasks, setTasks] = useState([
-    {
-      id: 1,
-      title: "Sukurti prisijungimo formą",
-      status: "Atlikta",
-      deadline: "2026-10-01",
-    },
-    {
-      id: 2,
-      title: "Sukurti užduočių sąrašą",
-      status: "Vykdoma",
-      deadline: "2026-10-05",
-    },
-  ]);
+  const [tasks, setTasks] = useState([]);
+  const [tasksLoading, setTasksLoading] = useState(true);
+  const [tasksError, setTasksError] = useState("");
+
+  useEffect(() => {
+    let isCurrent = true;
+    async function loadTasks() {
+      try {
+        const response = await fetch(TASKS_API_URL, { headers: getApiHeaders() });
+        if (!response.ok) throw new Error("Nepavyko gauti užduočių iš duomenų bazės.");
+        const loadedTasks = getTasksFromResponse(await response.json());
+        if (isCurrent) setTasks(loadedTasks);
+      } catch (error) {
+        if (isCurrent) setTasksError(error.message || "Nepavyko prisijungti prie duomenų bazės.");
+      } finally {
+        if (isCurrent) setTasksLoading(false);
+      }
+    }
+    loadTasks();
+    return () => { isCurrent = false; };
+  }, []);
 
   function handleSubmit(event) {
     event.preventDefault();
@@ -45,25 +78,53 @@ function App() {
     setLoginError("Neteisingas vartotojo vardas arba slaptažodis.");
   }
 
-  function handleAddTask(newTask) {
-    setTasks((currentTasks) => [...currentTasks, newTask]);
+  async function handleAddTask(newTask) {
+    setTasksError("");
+    try {
+      const response = await fetch(TASKS_API_URL, {
+        method: "POST",
+        headers: getApiHeaders(true),
+        body: JSON.stringify({
+          Title: newTask.title,
+          Status: newTask.status,
+          DeadLine: newTask.deadline,
+        }),
+      });
+      if (!response.ok) throw new Error("Nepavyko išsaugoti užduoties duomenų bazėje.");
+      const result = await response.json();
+      const createdTask = result?.data ?? result;
+      if (!createdTask?.id) throw new Error("Duomenų bazė negrąžino sukurtos užduoties ID.");
+      setTasks((currentTasks) => [...currentTasks, { ...newTask, ...createdTask }]);
+    } catch (error) {
+      setTasksError(error.message || "Nepavyko išsaugoti užduoties.");
+    }
   }
 
-  function handleTaskStatusChange(taskId, status) {
-    setTasks((currentTasks) =>
-      currentTasks.map((task) =>
-        task.id === taskId ? { ...task, status } : task,
-      ),
-    );
+  async function updateTask(taskId, changes) {
+    const previousTask = tasks.find((task) => task.id === taskId);
+    if (!previousTask) return;
+    const updatedTask = { ...previousTask, ...changes };
+    setTasksError("");
+    setTasks((currentTasks) => currentTasks.map((task) => task.id === taskId ? updatedTask : task));
+    try {
+      const response = await fetch(`${TASKS_API_URL}/${encodeURIComponent(taskId)}`, {
+        method: "PUT",
+        headers: getApiHeaders(true),
+        body: JSON.stringify({
+          Title: updatedTask.title,
+          Status: updatedTask.status,
+          DeadLine: updatedTask.deadline,
+        }),
+      });
+      if (!response.ok) throw new Error("Nepavyko atnaujinti užduoties duomenų bazėje.");
+    } catch (error) {
+      setTasks((currentTasks) => currentTasks.map((task) => task.id === taskId ? previousTask : task));
+      setTasksError(error.message || "Nepavyko atnaujinti užduoties.");
+    }
   }
 
-  function handleTaskDeadlineChange(taskId, deadline) {
-    setTasks((currentTasks) =>
-      currentTasks.map((task) =>
-        task.id === taskId ? { ...task, deadline } : task,
-      ),
-    );
-  }
+  function handleTaskStatusChange(taskId, status) { updateTask(taskId, { status }); }
+  function handleTaskDeadlineChange(taskId, deadline) { updateTask(taskId, { deadline }); }
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -153,9 +214,11 @@ function App() {
                   </p>
                 </section>
 
+                {tasksError && <p className="login-error" role="alert">{tasksError}</p>}
+
                 <TaskList
                   tasks={tasks}
-                  loading={false}
+                  loading={tasksLoading}
                   onStatusChange={handleTaskStatusChange}
                   onDeadlineChange={handleTaskDeadlineChange}
                 />
@@ -204,6 +267,7 @@ function App() {
       )}
 
       {activePage === "profile" && <Profile user={user} tasks={tasks} />}
+      {activePage === "weather" && <Weather />}
     </>
   );
 }
