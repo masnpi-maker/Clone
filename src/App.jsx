@@ -14,7 +14,22 @@ const ERROR_MESSAGES = {
   "User already registered": "Šis el. paštas jau užregistruotas. Pabandykite prisijungti.",
   "Password should be at least 6 characters": "Slaptažodį turi sudaryti bent 6 simboliai.",
 };
-const translateError = (error, fallback) => ERROR_MESSAGES[error?.message] || fallback;
+function getAuthErrorMessage(error, mode) {
+  const message = error?.message || "";
+  const normalized = message.toLowerCase();
+  if (ERROR_MESSAGES[message]) return ERROR_MESSAGES[message];
+  if (normalized.includes("signup is disabled") || normalized.includes("signups not allowed")) return "Registracija išjungta Supabase Auth nustatymuose.";
+  if (normalized.includes("password") && (normalized.includes("weak") || normalized.includes("short") || normalized.includes("characters"))) return "Slaptažodis per silpnas arba per trumpas. Pasirinkite stipresnį slaptažodį.";
+  if (normalized.includes("email") && (normalized.includes("invalid") || normalized.includes("valid"))) return "Įveskite galiojantį el. pašto adresą.";
+  if (normalized.includes("rate limit") || normalized.includes("too many requests")) return "Per daug bandymų. Palaukite ir bandykite dar kartą.";
+  if (normalized.includes("confirmation email") || normalized.includes("sending email")) return "Nepavyko išsiųsti patvirtinimo laiško. Patikrinkite Supabase el. pašto nustatymus.";
+  if (normalized.includes("database error saving new user")) return "Supabase nepavyko išsaugoti vartotojo. Patikrinkite Auth triggerius ir profiles lentelės politiką.";
+
+  const fallback = mode === "signup"
+    ? "Nepavyko sukurti paskyros. Patikrinkite duomenis ir bandykite dar kartą."
+    : "Nepavyko prisijungti. Patikrinkite duomenis ir bandykite dar kartą.";
+  return import.meta.env.DEV && message ? `${fallback} (Supabase: ${message})` : fallback;
+}
 
 function App() {
   const [session, setSession] = useState(null);
@@ -105,7 +120,7 @@ function App() {
         if (data.session) setAuthNotice("Paskyra sukurta. Sveiki prisijungę!");
         else setAuthNotice("Registracija sėkminga. Patikrinkite el. paštą ir patvirtinkite paskyrą.");
       }
-    } catch (error) { setAuthError(translateError(error, "Nepavyko prisijungti. Patikrinkite duomenis ir bandykite dar kartą.")); }
+    } catch (error) { setAuthError(getAuthErrorMessage(error, authMode)); }
     finally { setAuthBusy(false); }
   }
 
