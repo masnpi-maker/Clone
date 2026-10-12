@@ -74,7 +74,7 @@ function Weather() {
   }
 
   useEffect(() => {
-    loadWeather(DEFAULT_LOCATION);
+    Promise.resolve().then(() => loadWeather(DEFAULT_LOCATION));
   }, []);
 
   async function handleSearch(event) {

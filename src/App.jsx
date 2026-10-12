@@ -1,275 +1,188 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { supabase, supabaseConfigError } from "./lib/supabase";
 import TaskList from "./TaskList";
 import ProgressBar from "./ProgressBar";
 import Navbar from "./Navbar";
 import AddTaskForm from "./AddTaskForm";
 import Profile from "./Profile";
-import Weather from "./Weather";
 import "./App.css";
 
-const TASKS_API_URL = "https://testapi.io/api/masnpi-maker/resource/DateBase";
-const TESTAPI_TOKEN = import.meta.env.VITE_TESTAPI_TOKEN;
-
-function getApiHeaders(includeJson = false) {
-  return {
-    ...(includeJson ? { "Content-Type": "application/json" } : {}),
-    ...(TESTAPI_TOKEN ? { Authorization: `Bearer ${TESTAPI_TOKEN}` } : {}),
-  };
-}
-
-function getTasksFromResponse(response) {
-  const records = Array.isArray(response) ? response : response?.data;
-  if (!Array.isArray(records)) throw new Error("API grąžino netinkamo formato duomenis.");
-
-  return records.map((record) => {
-    const status = record.status ?? record.Status ?? "Nepradėta";
-    return {
-      ...record,
-      title: record.title ?? record.Title ?? record.name ?? "",
-      status: status === "Nepradeta" ? "Nepradėta" : status,
-      deadline: record.deadline ?? record.DeadLine ?? "",
-    };
-  });
-}
+const STATUS_LABELS = { todo: "Laukiama", in_progress: "Vykdoma", completed: "Atlikta" };
+const ERROR_MESSAGES = {
+  "Invalid login credentials": "Neteisingas el. paštas arba slaptažodis.",
+  "Email not confirmed": "Patvirtinkite el. paštą ir bandykite prisijungti.",
+};
+const translateError = (error, fallback) => ERROR_MESSAGES[error?.message] || fallback;
 
 function App() {
-  const user = {
-    name: "Jonas Jonaitis",
-    email: "jonas@flowly.lt",
-  };
-
-  const [activePage, setActivePage] = useState("home");
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(Boolean(supabase));
+  const [authMode, setAuthMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [loginError, setLoginError] = useState("");
-
+  const [displayName, setDisplayName] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [authNotice, setAuthNotice] = useState("");
+  const [profile, setProfile] = useState(null);
   const [tasks, setTasks] = useState([]);
-  const [tasksLoading, setTasksLoading] = useState(true);
+  const [tasksLoading, setTasksLoading] = useState(false);
   const [tasksError, setTasksError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busyTaskId, setBusyTaskId] = useState("");
+  const [activePage, setActivePage] = useState("home");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [priorityFilter, setPriorityFilter] = useState("all");
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
-    let isCurrent = true;
-    async function loadTasks() {
-      try {
-        const response = await fetch(TASKS_API_URL, { headers: getApiHeaders() });
-        if (!response.ok) throw new Error("Nepavyko gauti užduočių iš duomenų bazės.");
-        const loadedTasks = getTasksFromResponse(await response.json());
-        if (isCurrent) setTasks(loadedTasks);
-      } catch (error) {
-        if (isCurrent) setTasksError(error.message || "Nepavyko prisijungti prie duomenų bazės.");
-      } finally {
-        if (isCurrent) setTasksLoading(false);
-      }
-    }
-    loadTasks();
-    return () => { isCurrent = false; };
+    if (!supabase) return undefined;
+    let active = true;
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!active) return;
+      if (error) setAuthError("Nepavyko atkurti sesijos. Prisijunkite iš naujo.");
+      setSession(data?.session ?? null);
+      setAuthLoading(false);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      if (!nextSession) { setTasks([]); setProfile(null); }
+      setAuthError("");
+    });
+    return () => { active = false; subscription.unsubscribe(); };
   }, []);
 
-  function handleSubmit(event) {
-    event.preventDefault();
-
-    if (email === "admin" && password === "admin") {
-      setIsLoggedIn(true);
-      setLoginError("");
-      return;
+  const loadProfile = useCallback(async (user) => {
+    if (!user || !supabase) return;
+    let { data, error } = await supabase.from("profiles").select("id, display_name, created_at, updated_at").eq("id", user.id).maybeSingle();
+    if (error) { setTasksError("Nepavyko įkelti profilio."); return; }
+    if (!data) {
+      const name = user.user_metadata?.display_name || user.email?.split("@")[0] || "Flowly naudotojas";
+      const result = await supabase.from("profiles").upsert({ id: user.id, display_name: name }, { onConflict: "id" }).select("id, display_name, created_at, updated_at").single();
+      data = result.data;
+      error = result.error;
     }
+    if (error) setTasksError("Nepavyko atkurti profilio. Patikrinkite profiles lentelės RLS taisykles.");
+    else setProfile(data);
+  }, []);
 
-    setLoginError("Neteisingas vartotojo vardas arba slaptažodis.");
+  const userId = session?.user?.id;
+  const loadTasks = useCallback(async () => {
+    if (!userId || !supabase) return;
+    setTasksLoading(true);
+    setTasksError("");
+    const { data, error } = await supabase.from("tasks").select("id, user_id, title, description, status, priority, deadline, completed_at, created_at, updated_at").eq("user_id", userId).order("deadline", { ascending: true, nullsFirst: false }).order("created_at", { ascending: false });
+    if (error) setTasksError("Nepavyko įkelti užduočių. Bandykite dar kartą.");
+    else setTasks(data || []);
+    setTasksLoading(false);
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId || !supabase) return;
+    Promise.resolve().then(() => {
+      loadProfile(session.user);
+      loadTasks();
+    });
+  }, [userId, session?.user, loadProfile, loadTasks]);
+
+  async function handleAuthSubmit(event) {
+    event.preventDefault();
+    if (!supabase || authBusy) return;
+    setAuthBusy(true); setAuthError(""); setAuthNotice("");
+    try {
+      if (authMode === "login") {
+        const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase.auth.signUp({ email: email.trim(), password, options: { data: { display_name: displayName.trim() } } });
+        if (error) throw error;
+        if (data.session) setAuthNotice("Paskyra sukurta. Sveiki prisijungę!");
+        else setAuthNotice("Registracija sėkminga. Patikrinkite el. paštą ir patvirtinkite paskyrą.");
+      }
+    } catch (error) { setAuthError(translateError(error, "Nepavyko prisijungti. Patikrinkite duomenis ir bandykite dar kartą.")); }
+    finally { setAuthBusy(false); }
+  }
+
+  async function handleSignOut() {
+    if (!supabase || authBusy) return;
+    setAuthBusy(true);
+    const { error } = await supabase.auth.signOut();
+    setAuthBusy(false);
+    if (error) setTasksError("Nepavyko atsijungti. Bandykite dar kartą.");
+    else { setTasks([]); setProfile(null); setActivePage("home"); }
   }
 
   async function handleAddTask(newTask) {
-    setTasksError("");
-    try {
-      const response = await fetch(TASKS_API_URL, {
-        method: "POST",
-        headers: getApiHeaders(true),
-        body: JSON.stringify({
-          Title: newTask.title,
-          Status: newTask.status,
-          DeadLine: newTask.deadline,
-        }),
-      });
-      if (!response.ok) throw new Error("Nepavyko išsaugoti užduoties duomenų bazėje.");
-      const result = await response.json();
-      const createdTask = result?.data ?? result;
-      if (!createdTask?.id) throw new Error("Duomenų bazė negrąžino sukurtos užduoties ID.");
-      setTasks((currentTasks) => [...currentTasks, { ...newTask, ...createdTask }]);
-    } catch (error) {
-      setTasksError(error.message || "Nepavyko išsaugoti užduoties.");
-    }
+    if (!session?.user || !supabase) return { error: "Prisijunkite, kad galėtumėte kurti užduotis." };
+    const title = newTask.title.trim();
+    if (!title) return { error: "Įveskite užduoties pavadinimą." };
+    const { data, error } = await supabase.from("tasks").insert({ user_id: session.user.id, title, description: newTask.description.trim() || null, status: "todo", priority: newTask.priority, deadline: newTask.deadline || null }).select("id, user_id, title, description, status, priority, deadline, completed_at, created_at, updated_at").single();
+    if (error) return { error: "Nepavyko išsaugoti užduoties." };
+    setTasks((current) => [...current, data].sort((a, b) => (a.deadline || "9999").localeCompare(b.deadline || "9999")));
+    setNotice("Užduotis sėkmingai sukurta.");
+    return { success: true };
   }
 
   async function updateTask(taskId, changes) {
-    const previousTask = tasks.find((task) => task.id === taskId);
-    if (!previousTask) return;
-    const updatedTask = { ...previousTask, ...changes };
-    setTasksError("");
-    setTasks((currentTasks) => currentTasks.map((task) => task.id === taskId ? updatedTask : task));
-    try {
-      const response = await fetch(`${TASKS_API_URL}/${encodeURIComponent(taskId)}`, {
-        method: "PUT",
-        headers: getApiHeaders(true),
-        body: JSON.stringify({
-          Title: updatedTask.title,
-          Status: updatedTask.status,
-          DeadLine: updatedTask.deadline,
-        }),
-      });
-      if (!response.ok) throw new Error("Nepavyko atnaujinti užduoties duomenų bazėje.");
-    } catch (error) {
-      setTasks((currentTasks) => currentTasks.map((task) => task.id === taskId ? previousTask : task));
-      setTasksError(error.message || "Nepavyko atnaujinti užduoties.");
-    }
+    if (!session?.user || !supabase || busyTaskId) return;
+    setBusyTaskId(taskId); setTasksError(""); setNotice("");
+    const { data, error } = await supabase.from("tasks").update(changes).eq("id", taskId).eq("user_id", session.user.id).select("id, user_id, title, description, status, priority, deadline, completed_at, created_at, updated_at").single();
+    if (error) setTasksError("Nepavyko išsaugoti pakeitimų.");
+    else { setTasks((current) => current.map((task) => task.id === taskId ? data : task)); setNotice("Pakeitimai išsaugoti."); }
+    setBusyTaskId("");
+    return error ? { error: true } : { success: true };
   }
 
-  function handleTaskStatusChange(taskId, status) { updateTask(taskId, { status }); }
-  function handleTaskDeadlineChange(taskId, deadline) { updateTask(taskId, { deadline }); }
+  async function deleteTask(taskId) {
+    if (!session?.user || !supabase || busyTaskId) return;
+    if (!window.confirm("Ar tikrai norite ištrinti šią užduotį?")) return;
+    setBusyTaskId(taskId); setTasksError(""); setNotice("");
+    const { error } = await supabase.from("tasks").delete().eq("id", taskId).eq("user_id", session.user.id);
+    if (error) setTasksError("Nepavyko ištrinti užduoties.");
+    else { setTasks((current) => current.filter((task) => task.id !== taskId)); setNotice("Užduotis sėkmingai ištrinta."); }
+    setBusyTaskId("");
+  }
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const completedTaskCount = tasks.filter(
-    (task) => task.status === "Atlikta",
-  ).length;
-  const overdueTaskCount = tasks.filter((task) => {
-    if (task.status === "Atlikta" || !task.deadline) return false;
+  async function saveProfile(name) {
+    if (!session?.user || !supabase) return { error: "Sesija baigėsi. Prisijunkite iš naujo." };
+    const { data, error } = await supabase.from("profiles").upsert({ id: session.user.id, display_name: name.trim() }, { onConflict: "id" }).select("id, display_name, created_at, updated_at").single();
+    if (error) return { error: "Nepavyko išsaugoti profilio." };
+    setProfile(data);
+    return { success: true };
+  }
 
-    const deadline = new Date(`${task.deadline}T00:00:00`);
-    return deadline < today;
-  }).length;
-  const taskStatuses = ["Nepradėta", "Vykdoma", "Atlikta"];
+  const filteredTasks = useMemo(() => tasks.filter((task) => (statusFilter === "all" || task.status === statusFilter) && (priorityFilter === "all" || task.priority === priorityFilter) && task.title.toLocaleLowerCase("lt").includes(search.toLocaleLowerCase("lt"))), [tasks, statusFilter, priorityFilter, search]);
+  const completedCount = tasks.filter((task) => task.status === "completed").length;
+  const progress = tasks.length ? Math.round(completedCount / tasks.length * 100) : 0;
 
-  return (
-    <>
-      <Navbar activePage={activePage} onNavigate={setActivePage} />
+  if (authLoading) return <main className="auth-loading">Tikrinama sesija…</main>;
 
-      {activePage === "home" && (
-        <>
-          {isLoggedIn && (
-            <header className="welcome-message">
-              <h1>Sveiki sugrįžę!</h1>
-              <p>Prisijungėte kaip admin.</p>
-            </header>
-          )}
-
-          <main className="login-page">
-            {!isLoggedIn && (
-              <div className="login-card">
-                <>
-                  <header className="login-card__header">
-                    <h1>Prisijungti</h1>
-                    <p>Įveskite savo duomenis, kad tęstumėte</p>
-                  </header>
-
-                  <form className="login-form" onSubmit={handleSubmit}>
-                    <label className="login-field">
-                      <span>Vartotojo vardas</span>
-                      <input
-                        type="text"
-                        name="username"
-                        autoComplete="username"
-                        placeholder="admin"
-                        value={email}
-                        onChange={(event) => setEmail(event.target.value)}
-                        required
-                      />
-                    </label>
-
-                    <label className="login-field">
-                      <span>Slaptažodis</span>
-                      <input
-                        type="password"
-                        name="password"
-                        autoComplete="current-password"
-                        placeholder="••••••••"
-                        value={password}
-                        onChange={(event) => setPassword(event.target.value)}
-                        required
-                      />
-                    </label>
-
-                    <button type="submit" className="login-submit">
-                      Prisijungti
-                    </button>
-
-                    {loginError && (
-                      <p className="login-error" role="alert">
-                        {loginError}
-                      </p>
-                    )}
-                  </form>
-                </>
-              </div>
-            )}
-
-            {isLoggedIn && (
-              <>
-                <section className="dashboard-summary" aria-label="Užduočių suvestinė">
-                  <p>
-                    <strong>{tasks.length} užduotys</strong>
-                    <span aria-hidden="true">·</span>
-                    <strong>{completedTaskCount} atliktos</strong>
-                    <span aria-hidden="true">·</span>
-                    <strong>{overdueTaskCount} vėluoja</strong>
-                  </p>
-                </section>
-
-                {tasksError && <p className="login-error" role="alert">{tasksError}</p>}
-
-                <TaskList
-                  tasks={tasks}
-                  loading={tasksLoading}
-                  onStatusChange={handleTaskStatusChange}
-                  onDeadlineChange={handleTaskDeadlineChange}
-                />
-
-                <section className="charts-card" aria-labelledby="charts-title">
-                  <header className="charts-card__header">
-                    <h2 id="charts-title">Grafikai</h2>
-                    <p>Užduočių pasiskirstymas pagal būseną</p>
-                  </header>
-                  <div className="charts-list">
-                    {taskStatuses.map((status) => {
-                      const count = tasks.filter((task) => task.status === status).length;
-                      const percentage = tasks.length
-                        ? Math.round((count / tasks.length) * 100)
-                        : 0;
-
-                      return (
-                        <div className="chart-row" key={status}>
-                          <div className="chart-row__label">
-                            <span>{status}</span>
-                            <strong>{count}</strong>
-                          </div>
-                          <div
-                            className="chart-track"
-                            role="progressbar"
-                            aria-label={`${status}: ${count} užduotys`}
-                            aria-valuemin="0"
-                            aria-valuemax="100"
-                            aria-valuenow={percentage}
-                          >
-                            <span style={{ width: `${percentage}%` }} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-
-                <AddTaskForm onAddTask={handleAddTask} />
-
-                <ProgressBar initialProgress={50} />
-              </>
-            )}
-          </main>
-        </>
-      )}
-
-      {activePage === "profile" && <Profile user={user} tasks={tasks} />}
-      {activePage === "weather" && <Weather />}
-    </>
-  );
+  return <>
+    <Navbar activePage={activePage} onNavigate={setActivePage} />
+    {!session ? <main className="login-page"><section className="login-card">
+      <header className="login-card__header"><h1>{authMode === "login" ? "Prisijungti" : "Sukurti paskyrą"}</h1><p>Įveskite savo duomenis, kad tęstumėte</p></header>
+      <form className="login-form" onSubmit={handleAuthSubmit}>
+        {authMode === "signup" && <label className="login-field"><span>Rodomas vardas</span><input value={displayName} onChange={(e) => setDisplayName(e.target.value)} autoComplete="name" required /></label>}
+        <label className="login-field"><span>El. paštas</span><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required /></label>
+        <label className="login-field"><span>Slaptažodis</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={authMode === "login" ? "current-password" : "new-password"} minLength="6" required /></label>
+        {authError && <p className="login-error" role="alert">{authError}</p>}{authNotice && <p className="success-message" role="status">{authNotice}</p>}
+        <button className="login-submit" type="submit" disabled={authBusy}>{authBusy ? "Prašome palaukti…" : authMode === "login" ? "Prisijungti" : "Registruotis"}</button>
+      </form>
+      <button className="auth-switch" type="button" disabled={authBusy} onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthError(""); setAuthNotice(""); }}>{authMode === "login" ? "Neturite paskyros? Registruotis" : "Jau turite paskyrą? Prisijungti"}</button>
+      {supabaseConfigError && <p className="login-error" role="alert">{supabaseConfigError}</p>}
+    </section></main> : <>
+      {activePage === "home" && <><header className="welcome-message"><h1>Sveiki, {profile?.display_name || session.user.email}!</h1><p>Jūsų užduotys ir progresas vienoje vietoje.</p></header>
+        <main className="dashboard-page"><section className="dashboard-summary"><p><strong>{tasks.length} užduotys</strong><span>·</span><strong>{completedCount} atliktos</strong></p></section>
+          {tasksError && <div className="notice-error" role="alert">{tasksError} <button type="button" onClick={loadTasks}>Bandyti dar kartą</button></div>}{notice && <p className="success-message" role="status">{notice}</p>}
+          <section className="task-controls" aria-label="Užduočių filtrai"><input type="search" placeholder="Ieškoti užduoties…" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Ieškoti pagal pavadinimą"/><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Filtruoti pagal būseną"><option value="all">Visos būsenos</option>{Object.entries(STATUS_LABELS).map(([v,l]) => <option key={v} value={v}>{l}</option>)}</select><select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)} aria-label="Filtruoti pagal prioritetą"><option value="all">Visi prioritetai</option><option value="low">Žemas</option><option value="medium">Vidutinis</option><option value="high">Aukštas</option></select></section>
+          <TaskList tasks={filteredTasks} loading={tasksLoading} onRetry={loadTasks} onUpdate={updateTask} onDelete={deleteTask} busyTaskId={busyTaskId}/>
+          <AddTaskForm onAddTask={handleAddTask}/><ProgressBar progress={progress} completedCount={completedCount} totalCount={tasks.length}/>
+        </main></>}
+      {activePage === "tasks" && <main className="dashboard-page"><h1>Užduotys</h1>{tasksError && <p className="login-error" role="alert">{tasksError}</p>}<section className="task-controls"><input type="search" placeholder="Ieškoti užduoties…" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Ieškoti"/><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="all">Visos būsenos</option>{Object.entries(STATUS_LABELS).map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></section><TaskList tasks={filteredTasks} loading={tasksLoading} onRetry={loadTasks} onUpdate={updateTask} onDelete={deleteTask} busyTaskId={busyTaskId}/><AddTaskForm onAddTask={handleAddTask}/></main>}
+      {activePage === "progress" && <main className="dashboard-page"><ProgressBar progress={progress} completedCount={completedCount} totalCount={tasks.length}/></main>}
+      {activePage === "profile" && <Profile user={session.user} profile={profile} tasks={tasks} onSave={saveProfile} onSignOut={handleSignOut} busy={authBusy}/ >}
+    </>}
+  </>;
 }
 
 export default App;

@@ -4,121 +4,34 @@ import "./AddTaskForm.css";
 function AddTaskForm({ onAddTask }) {
   const [isOpen, setIsOpen] = useState(false);
   const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
   const [deadline, setDeadline] = useState("");
-  const [status, setStatus] = useState("Nepradėta");
+  const [priority, setPriority] = useState("medium");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
-
-    const newTask = {
-      id: Date.now(),
-      title,
-      status,
-      deadline,
-    };
-
-    onAddTask(newTask);
-
-    setTitle("");
-    setDeadline("");
-    setStatus("Nepradėta");
-    setIsOpen(false);
+    if (busy) return;
+    if (!title.trim()) { setError("Įveskite užduoties pavadinimą."); return; }
+    setBusy(true); setError("");
+    const result = await onAddTask({ title, description, deadline, priority });
+    setBusy(false);
+    if (result?.error) { setError(result.error); return; }
+    setTitle(""); setDescription(""); setDeadline(""); setPriority("medium"); setIsOpen(false);
   }
 
-  function handleCancel() {
-    setTitle("");
-    setDeadline("");
-    setStatus("Nepradėta");
-    setIsOpen(false);
-  }
-
-  if (!isOpen) {
-    return (
-      <div className="add-task">
-        <button
-          type="button"
-          className="add-task__open-button"
-          onClick={() => setIsOpen(true)}
-        >
-          + Nauja užduotis
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="add-task">
-      <div className="add-task__card">
-        <div className="add-task__header">
-          <div>
-            <h2>Nauja užduotis</h2>
-            <p>Pridėkite naują užduotį į savo sąrašą</p>
-          </div>
-
-          <button
-            type="button"
-            className="add-task__close"
-            onClick={handleCancel}
-            aria-label="Uždaryti"
-          >
-            ×
-          </button>
-        </div>
-
-        <form className="add-task__form" onSubmit={handleSubmit}>
-          <label className="add-task__field">
-            <span>Užduoties pavadinimas</span>
-
-            <input
-              type="text"
-              placeholder="Pvz. Sukurti profilio puslapį"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              required
-            />
-          </label>
-
-          <label className="add-task__field">
-            <span>Terminas</span>
-
-            <input
-              type="date"
-              value={deadline}
-              onChange={(event) => setDeadline(event.target.value)}
-              required
-            />
-          </label>
-
-          <label className="add-task__field">
-            <span>Statusas</span>
-
-            <select
-              value={status}
-              onChange={(event) => setStatus(event.target.value)}
-            >
-              <option value="Nepradėta">Nepradėta</option>
-              <option value="Vykdoma">Vykdoma</option>
-              <option value="Atlikta">Atlikta</option>
-            </select>
-          </label>
-
-          <div className="add-task__actions">
-            <button
-              type="button"
-              className="add-task__cancel"
-              onClick={handleCancel}
-            >
-              Atšaukti
-            </button>
-
-            <button type="submit" className="add-task__submit">
-              Pridėti užduotį
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
+  if (!isOpen) return <div className="add-task"><button type="button" className="add-task__open-button" onClick={() => setIsOpen(true)}>+ Nauja užduotis</button></div>;
+  return <div className="add-task"><div className="add-task__card"><div className="add-task__header"><div><h2>Nauja užduotis</h2><p>Pridėkite naują užduotį į savo sąrašą</p></div><button type="button" className="add-task__close" onClick={() => setIsOpen(false)} aria-label="Uždaryti">×</button></div>
+    <form className="add-task__form" onSubmit={handleSubmit}>
+      <label className="add-task__field"><span>Užduoties pavadinimas</span><input type="text" placeholder="Pvz. Sukurti profilio puslapį" value={title} onChange={(e) => setTitle(e.target.value)} required maxLength="200"/></label>
+      <label className="add-task__field"><span>Aprašymas</span><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows="3"/></label>
+      <label className="add-task__field"><span>Prioritetas</span><select value={priority} onChange={(e) => setPriority(e.target.value)}><option value="low">Žemas</option><option value="medium">Vidutinis</option><option value="high">Aukštas</option></select></label>
+      <label className="add-task__field"><span>Terminas (neprivaloma)</span><input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)}/></label>
+      {error && <p className="login-error" role="alert">{error}</p>}
+      <div className="add-task__actions"><button type="button" className="add-task__cancel" disabled={busy} onClick={() => setIsOpen(false)}>Atšaukti</button><button type="submit" className="add-task__submit" disabled={busy}>{busy ? "Saugoma…" : "Pridėti užduotį"}</button></div>
+    </form>
+  </div></div>;
 }
 
 export default AddTaskForm;

@@ -170,9 +170,10 @@
   font: inherit;
   font-size: 14px;
   font-weight: 600;
-  cursor: not-allowed;
-  opacity: 0.65;
+  cursor: pointer;
 }
+
+.profile-edit-form,.profile-edit-form label{display:grid;gap:10px;color:var(--text);font-size:14px}.profile-edit-form input{padding:11px 12px;border:1px solid var(--border);border-radius:9px;background:var(--bg);color:var(--text-h);font:inherit}.profile-actions{display:flex;gap:10px}.profile-edit-button--secondary{background:transparent;color:var(--text)}.profile-signout{width:100%;margin-top:12px;padding:11px 16px;border:1px solid var(--border);border-radius:10px;background:transparent;color:#f87171;font:inherit;font-weight:600;cursor:pointer}.profile-signout:disabled,.profile-edit-button:disabled{opacity:.6;cursor:wait}
 
 @media (max-width: 640px) {
   .profile-page {
