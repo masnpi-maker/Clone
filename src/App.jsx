@@ -11,6 +11,8 @@ const STATUS_LABELS = { todo: "Laukiama", in_progress: "Vykdoma", completed: "At
 const ERROR_MESSAGES = {
   "Invalid login credentials": "Neteisingas el. paštas arba slaptažodis.",
   "Email not confirmed": "Patvirtinkite el. paštą ir bandykite prisijungti.",
+  "User already registered": "Šis el. paštas jau užregistruotas. Pabandykite prisijungti.",
+  "Password should be at least 6 characters": "Slaptažodį turi sudaryti bent 6 simboliai.",
 };
 const translateError = (error, fallback) => ERROR_MESSAGES[error?.message] || fallback;
 
@@ -96,6 +98,10 @@ function App() {
       } else {
         const { data, error } = await supabase.auth.signUp({ email: email.trim(), password, options: { data: { display_name: displayName.trim() } } });
         if (error) throw error;
+        if (data.user?.identities?.length === 0) {
+          setAuthError("Šis el. paštas jau užregistruotas. Pabandykite prisijungti.");
+          return;
+        }
         if (data.session) setAuthNotice("Paskyra sukurta. Sveiki prisijungę!");
         else setAuthNotice("Registracija sėkminga. Patikrinkite el. paštą ir patvirtinkite paskyrą.");
       }
@@ -166,7 +172,7 @@ function App() {
         <label className="login-field"><span>El. paštas</span><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required /></label>
         <label className="login-field"><span>Slaptažodis</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={authMode === "login" ? "current-password" : "new-password"} minLength="6" required /></label>
         {authError && <p className="login-error" role="alert">{authError}</p>}{authNotice && <p className="success-message" role="status">{authNotice}</p>}
-        <button className="login-submit" type="submit" disabled={authBusy}>{authBusy ? "Prašome palaukti…" : authMode === "login" ? "Prisijungti" : "Registruotis"}</button>
+        <button className="login-submit" type="submit" disabled={authBusy || !supabase}>{authBusy ? "Prašome palaukti…" : authMode === "login" ? "Prisijungti" : "Registruotis"}</button>
       </form>
       <button className="auth-switch" type="button" disabled={authBusy} onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthError(""); setAuthNotice(""); }}>{authMode === "login" ? "Neturite paskyros? Registruotis" : "Jau turite paskyrą? Prisijungti"}</button>
       {supabaseConfigError && <p className="login-error" role="alert">{supabaseConfigError}</p>}
